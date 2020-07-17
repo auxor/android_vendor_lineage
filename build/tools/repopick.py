@@ -47,6 +47,14 @@ except ImportError:
         urllib.error = urllib2
         urllib.request = urllib2
 
+try:
+    # For python3
+    from urllib.parse import urlparse
+    from urllib.parse import urljoin
+except ImportError:
+    # For python2
+    from urlparse import urlparse
+    from urlparse import urljoin
 
 # cmp() is not available in Python 3, define it manually
 # See https://docs.python.org/3.0/whatsnew/3.0.html#ordering-comparisons
@@ -241,10 +249,24 @@ if __name__ == '__main__':
     #   - convert project name and revision to a path
     project_name_to_data = {}
     manifest = subprocess.check_output(['repo', 'manifest'])
+
+    manifest_url = subprocess.check_output(['git', '-C', '.repo/manifests', 'config', '--get', 'remote.origin.url'])
+    if not hasattr(manifest_url, 'encode'):
+        manifest_url = manifest_url.decode()
+    manifest_url = manifest_url.strip()
+
     xml_root = ElementTree.fromstring(manifest)
     projects = xml_root.findall('project')
     remotes = xml_root.findall('remote')
+    default_remote = xml_root.findall('default')[0].get('remote')
     default_revision = xml_root.findall('default')[0].get('revision')
+
+    # store the map of remote:fetch
+    remote_to_fetch = {}
+    for remote in remotes:
+        fetch = remote.get('fetch')
+        name = remote.get('name')
+        remote_to_fetch[name] = fetch
 
     #dump project data into the a list of dicts with the following data:
     #{project: {path, revision}}
@@ -253,6 +275,17 @@ if __name__ == '__main__':
         name = project.get('name')
         # when name and path are equal, "repo manifest" doesn't return a path at all, so fall back to name
         path = project.get('path', name)
+
+        # translate name to full path in remote server
+        remote = project.get('remote')
+        if remote is None:
+           remote = default_remote
+        remote_fetch = remote_to_fetch[remote]
+        manifest_url = manifest_url.replace('ssh://', 'http://') # urljoin don't support ssh
+        manifest_url = manifest_url.replace('git://', 'http://') # urljoin don't support git
+        url = urljoin(manifest_url, remote_fetch + '/' + name)
+        name = urlparse(url).path[1:] # remove first "/"
+
         revision = project.get('revision')
         if revision is None:
             for remote in remotes:
